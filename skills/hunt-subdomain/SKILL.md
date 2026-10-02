@@ -1,15 +1,15 @@
 ---
 name: hunt-subdomain
-description: Subdomain enumeration using Subfinder and SubDog for discovery, followed by a mandatory naabu port scan of every discovered host. Use when the user asks to discover subdomains with these tools, or asks to enumerate a domain's subdomains and their open ports. Covers passive hostname discovery plus active port scanning — not takeover checks or vulnerability testing.
+description: Subdomain enumeration using Subfinder and SubDog for discovery, followed by a mandatory naabu port scan of every discovered host and a mandatory httpx probe of every naabu-confirmed host. Optionally crawls with katana and urlflux when the user asks for URL crawling. Use when the user asks to discover subdomains with these tools, or asks to enumerate a domain's subdomains and their open ports. Covers passive hostname discovery plus active port scanning, HTTP probing, and conditional URL crawling — not takeover checks or vulnerability testing.
 ---
 
 # Subdomain Enumeration
 
-Collect publicly discoverable hostnames for one exact root domain using only `subfinder` and `subdog`, then port-scan every discovered host with `naabu`.
+Collect publicly discoverable hostnames for one exact root domain using only `subfinder` and `subdog`, then port-scan every discovered host with `naabu`, then probe every naabu-confirmed host with `httpx`.
 
-Subdomain discovery is passive; the naabu port scan that follows it is active and is a required final step, not an optional extra. Do not invoke any other reconnaissance or enumeration tool. Standard shell utilities may be used only to create files, normalize output, filter the exact domain, deduplicate, and count results.
+Subdomain discovery is passive; the naabu port scan and httpx probe that follow it are active and are required final steps, not optional extras. Do not invoke any other reconnaissance or enumeration tool. The single exception is URL crawling: when the user asks for URL crawling, run both `katana` and `urlflux` against the httpx output. Standard shell utilities may be used only to create files, normalize output, filter the exact domain, deduplicate, sort, and count results.
 
-Report hostnames as passive discoveries unless naabu has actually confirmed them live. Do not add takeover or vulnerability conclusions.
+Report hostnames as passive discoveries unless naabu has actually confirmed them live. httpx is used only to probe the naabu-confirmed hosts, not to discover new ones. Do not add takeover or vulnerability conclusions.
 
 ## Workflow
 
@@ -23,10 +23,10 @@ TMPDIR="$OUTDIR/.tmp"
 mkdir -p "$TMPDIR"
 ```
 
-Check that all three required tools are available:
+Check that all four required tools are available:
 
 ```bash
-command -v subfinder subdog naabu
+command -v subfinder subdog naabu httpx
 ```
 
 Run Subfinder:
@@ -69,4 +69,50 @@ Count the live hosts naabu confirmed:
 wc -l "$OUTDIR/naabu.txt"
 ```
 
-Report the subdomain line count, the naabu-confirmed host count, and both output paths. Do not add takeover or vulnerability conclusions.
+Probe every naabu-confirmed host with httpx. This step is required — always run this exact command, do not skip it:
+
+```bash
+cat "$OUTDIR/naabu.txt" | httpx -duc -silent -nc -sc -title -cl -ct | sort -t'[' -k3,3nr | unew -el -i "$OUTDIR/httpx.txt"
+```
+
+Count the httpx-probed hosts:
+
+```bash
+wc -l "$OUTDIR/httpx.txt"
+```
+
+## URL crawling (only when the user asks for it)
+
+Skip this entire section unless the user explicitly asked for URL crawling. When they do, run **both** katana and urlflux against the httpx output — neither is optional. Do not crawl without being asked.
+
+Check that the two crawling tools are available:
+
+```bash
+command -v katana urlflux
+```
+
+Run katana:
+
+```bash
+cat "$OUTDIR/httpx.txt" | katana -duc -silent -nc -jc -concurrency 10 -parallelism 10 -depth 7 -timeout 30 -aff | unew "$TMPDIR/katana.raw"
+```
+
+Run urlflux:
+
+```bash
+cat "$OUTDIR/httpx.txt" | urlflux --silent | unew "$TMPDIR/urlflux.raw"
+```
+
+Merge and deduplicate both crawlers into a single URL list:
+
+```bash
+cat "$TMPDIR/katana.raw" "$TMPDIR/urlflux.raw" | unew "$OUTDIR/urls.txt"
+```
+
+Count the crawled URLs:
+
+```bash
+wc -l "$OUTDIR/urls.txt"
+```
+
+Report the subdomain line count, the naabu-confirmed host count, the httpx-probed host count, the crawled URL count (only if crawling was requested), and the corresponding output paths. Do not add takeover or vulnerability conclusions.
